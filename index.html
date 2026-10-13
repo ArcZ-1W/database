@@ -303,6 +303,353 @@ details.ldet summary small{color:var(--ink-3);font-weight:400}
     </section>
   </main>
 </div>
+<!-- ===== ArcZ add-on: tempel SEBELUM </body> (setelah </script> yang lama) ===== -->
+<style>
+.tokstats{display:flex;gap:12px;flex-wrap:wrap;margin-top:6px;font-size:12.5px;color:var(--ink-3)}
+.tokstats b{color:var(--ink);font-variant-numeric:tabular-nums}
+.mini .tokstats{flex-direction:column;gap:2px}
+.bar.inf>i{background:repeating-linear-gradient(45deg,var(--blue-2) 0 10px,var(--blue) 10px 20px)}
+.chip .ext{font-weight:700;font-size:10.5px;background:var(--sky);color:var(--blue);padding:1px 6px;border-radius:6px;flex:none}
+.msg.user .chip .ext{background:rgba(255,255,255,.28);color:#fff}
+.btn-sm .icon,.mact .icon,.cb-h .icon{width:15px;height:15px}
+.mact{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.mact button{display:inline-flex;align-items:center;gap:5px;padding:5px 10px;border-radius:9px;font-size:12.5px;color:var(--ink-2);background:rgba(37,99,235,.08)}
+.mact button:hover{background:var(--sky)}
+.msg .cb{margin:10px 0;border-radius:12px;overflow:hidden;background:#0f1b3d}
+.cb-h{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:7px 10px;background:#1a2a57;color:#cfe0ff;font-size:12px}
+.cb-h .lang{font-weight:700;background:rgba(255,255,255,.15);padding:2px 8px;border-radius:99px}
+.cb-h .fname{opacity:.85;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:40%}
+.cb-h .sp{flex:1}
+.cb-h button{display:inline-flex;align-items:center;gap:5px;color:#e8f0ff;background:rgba(255,255,255,.12);padding:4px 9px;border-radius:8px;font-size:12px}
+.cb-h button.run{background:var(--blue)}
+.msg .cb pre{margin:0;border-radius:0}
+.pv{width:min(1100px,100%);height:90vh;max-height:100%;display:flex;flex-direction:column;border-radius:20px;overflow:hidden;background:#fff}
+.pv.full{width:100vw;height:100dvh;max-height:none;border-radius:0}
+.modal-bg.isfull{padding:0}
+.pv-h{display:flex;align-items:center;gap:6px;padding:8px 12px;flex-wrap:wrap}
+.pv-f{flex:1;border:0;width:100%;background:#fff}
+@media(max-width:820px){#clearChat .lbl{display:none}#modelSel{flex:1;min-width:0}.chat-top{gap:8px}}
+</style>
+<script>
+/* ============ ArcZ add-on ============ */
+Object.assign(ICON,{copy:'<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/>',redo:'<path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/>',pin:'<path d="M12 17v5M8 3h8l-1 6 3 4H6l3-4z"/>',play:'<path d="M7 4l13 8-13 8z"/>',ext:'<path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>',full:'<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>',plus:'<path d="M12 5v14M5 12h14"/>'});
+
+/* ---- Token: bar sisa + total + terpakai (admin: tanpa batas, tetap tampil) ---- */
+function tokPanel(u){
+  const adm=u.role==='admin',used=Number(adm?u.tokens_used:u.used_tokens)||0,lim=Number(u.limit_tokens)||0,left=Math.max(lim-used,0),p=adm?100:(lim>0?left/lim*100:0),c=adm?'inf':p<=10?'bad':p<=30?'warn':'';
+  return `<div class="meter"><div class="top"><b>Sisa token</b><span>${adm?'∞':Math.round(p)+'%'}</span></div><div class="bar ${c}"><i style="width:${p}%"></i></div><div class="tokstats"><span>Total <b>${adm?'Tanpa batas':fmt(lim)}</b></span><span>Terpakai <b>${fmt(used)}</b></span><span>Sisa <b>${adm?'∞':fmt(left)}</b></span></div></div>`;
+}
+function tokMeter(u){return tokPanel(u)}
+function renderTok(){$('tokRow').innerHTML=tokPanel(S.user)}
+const Z_rs=renderSide;
+renderSide=function(){Z_rs();if(isAdmin())$('sideUsage').innerHTML=tokPanel(S.user)+'<div style="font-size:12.5px;color:var(--ink-2)">Admin: tanpa batas kuota & masa berlaku.</div>'};
+const Z_ru=renderUsage;
+renderUsage=async function(){
+  await Z_ru();const b=$('usageBody'),g=b.querySelector('.grid');
+  if(isAdmin()&&g)g.insertAdjacentHTML('afterbegin',`<div class="card"><h3>Token</h3>${tokPanel(S.user)}</div>`);
+  const t=b.querySelector('.sec-title');if(t)t.textContent='Chat di-pin (maks '+MAX_CHAT_LOGS+') · yang tidak di-pin hanya ada di perangkat ini';
+  b.querySelectorAll('[data-delchat]').forEach(x=>x.textContent='Lepas pin');
+};
+
+/* ---- Parse pesan AI: blok kode, nama file, bahasa ---- */
+const Z_EXT={html:'HTML',css:'CSS',js:'JavaScript',jsx:'JSX',ts:'TypeScript',tsx:'TSX',json:'JSON',py:'Python',php:'PHP',java:'Java',sql:'SQL',xml:'XML',yaml:'YAML',md:'Markdown',sh:'Shell',bash:'Shell',c:'C',cpp:'C++',go:'Go',rs:'Rust',txt:'Teks',svg:'SVG'};
+const Z_FN=/([\w\-.\/]+\.(?:html?|css|js|mjs|jsx|ts|tsx|json|md|py|php|java|cpp|sql|xml|ya?ml|txt|sh|go|rs|svg|c))\b/i;
+const zLbl=l=>Z_EXT[l]||(l?l.toUpperCase():'Kode');
+const zExt=n=>{n=String(n||'');return n.includes('.')?n.split('.').pop().slice(0,5).toUpperCase():'FILE'};
+const zClean=n=>n.replace(/^\.?\//,'');
+function zName(info,before,code){
+  let m=info.match(Z_FN);if(m)return zClean(m[1]);
+  const f=code.split('\n',1)[0];
+  m=f.match(/file(?:name)?\s*[:=]\s*([\w\-.\/]+\.\w+)/i)||f.match(/^\s*(?:<!--|\/\/|\/\*|#)\s*([\w\-.\/]+\.\w{1,5})\s*(?:-->|\*\/)?\s*$/);
+  if(m)return zClean(m[1]);
+  const prev=before.trimEnd().split('\n').pop()||'';m=prev.length<140&&prev.match(Z_FN);
+  return m?zClean(m[1]):'';
+}
+function zLang(info,name,code){
+  let l=(info.trim().split(/\s+/)[0]||'').toLowerCase();
+  if(l.includes('.')||l.includes('='))l='';
+  if(!l&&name)l=name.split('.').pop().toLowerCase();
+  if(!l&&/^\s*(<!doctype html|<html)/i.test(code))l='html';
+  return({javascript:'js',typescript:'ts',htm:'html',yml:'yaml',markdown:'md',python:'py'})[l]||l;
+}
+function zParse(t){
+  const out=[],re=/```([^\n`]*)\n([\s\S]*?)(?:```|$)/g;let last=0,m,bi=0;
+  while((m=re.exec(t))){
+    if(m.index>last)out.push({type:'text',v:t.slice(last,m.index)});
+    const code=m[2].replace(/\n$/,''),name=zName(m[1],t.slice(0,m.index),code);
+    out.push({type:'code',code,name,lang:zLang(m[1],name,code),bi:bi++});last=re.lastIndex;
+  }
+  if(last<t.length)out.push({type:'text',v:t.slice(last)});
+  return out;
+}
+function zText(v){
+  const p=esc(v).replace(/`([^`\n]+)`/g,'<code>$1</code>').replace(/\*\*([^*\n]+)\*\*/g,'<strong>$1</strong>'),o=[];let l=false;
+  p.split('\n').forEach(x=>{const li=x.match(/^\s*[-*]\s+(.*)/),hd=x.match(/^(#{1,4})\s+(.*)/);
+    if(li){if(!l){o.push('<ul>');l=true}o.push('<li>'+li[1]+'</li>');return}
+    if(l){o.push('</ul>');l=false}
+    if(hd)o.push('<h4>'+hd[2]+'</h4>');else if(x.trim())o.push('<div>'+x+'</div>')});
+  if(l)o.push('</ul>');return o.join('');
+}
+function zBox(s,mi){
+  const b=(a,i,t,c)=>`<button class="${c||''}" data-act="${a}" data-mi="${mi}" data-bi="${s.bi}">${ic(i)}<span>${t}</span></button>`,h=s.lang==='html';
+  return `<div class="cb"><div class="cb-h"><span class="lang">${esc(zLbl(s.lang))}</span>${s.name?`<span class="fname" title="${esc(s.name)}">${esc(s.name)}</span>`:''}<span class="sp"></span>${b('copycode','copy','Salin')}${h?b('run','play','Jalankan','run')+b('tab','ext','Tab baru')+b('full','full','Layar penuh'):''}</div><pre><code>${esc(s.code)}</code></pre></div>`;
+}
+const mdz=(t,mi)=>zParse(t).map(s=>s.type==='text'?zText(s.v):zBox(s,mi)).join('');
+
+/* ---- Render pesan + lampiran (badge tipe file) ---- */
+function renderMsgs(){
+  const el=$('msgs');
+  if(!S.chat.length){el.innerHTML=`<div class="empty"><div class="logo">Az</div><h3>Mau mulai dari mana?</h3><p>Tulis pertanyaan, atau lampirkan file lewat ikon klip. Semua jenis file bisa diunggah.</p></div>`;return}
+  let la=-1;S.chat.forEach((m,i)=>{if(m.role==='ai')la=i});
+  el.innerHTML=S.chat.map((m,i)=>{
+    if(m.role==='info')return `<div class="tokinfo">${m.html}</div>`;
+    if(m.role==='user'){
+      const at=(m.atts&&m.atts.length)?`<div class="atts">${m.atts.map(a=>`<span class="chip" title="${esc(a.type||'')}">${ic('file')}<span class="ext">${esc(zExt(a.name))}</span><span>${esc(a.name)}</span></span>`).join('')}</div>`:'';
+      return `<div class="msg user">${at}${esc(m.text).replace(/\n/g,'<br>')}</div>`;
+    }
+    return `<div class="msg ai">${mdz(m.text,i)}<div class="mact"><button data-act="copymsg" data-mi="${i}">${ic('copy')}<span>Salin</span></button>${i===la&&!S.busy?`<button data-act="regen" data-mi="${i}">${ic('redo')}<span>Buat ulang</span></button>`:''}</div></div>`;
+  }).join('')+(S.busy?'<div class="msg ai"><span class="dotload"><i></i><i></i><i></i></span></div>':'');
+  scrollDown();
+}
+function renderAtts(){
+  $('attrow').innerHTML=S.atts.map((a,i)=>`<span class="chip">${ic('file')}<span class="ext">${esc(zExt(a.name))}</span><span>${esc(a.name)}${a.uploading?' …':''}</span><button data-i="${i}" aria-label="Hapus">${ic('x')}</button></span>`).join('');
+  $('attrow').querySelectorAll('button').forEach(b=>b.onclick=()=>{S.atts.splice(+b.dataset.i,1);renderAtts()});
+}
+async function zCopy(t,b){
+  try{await navigator.clipboard.writeText(t)}catch{const x=document.createElement('textarea');x.value=t;x.style.cssText='position:fixed;opacity:0';document.body.appendChild(x);x.select();try{document.execCommand('copy')}catch{}x.remove()}
+  const s=b&&b.querySelector('span');if(s){const o=s.textContent;s.textContent='Tersalin';setTimeout(()=>s.textContent=o,1400)}
+}
+$('msgs').addEventListener('click',e=>{
+  const b=e.target.closest('[data-act]');if(!b)return;
+  const a=b.dataset.act,mi=+b.dataset.mi,bi=+b.dataset.bi,m=S.chat[mi];if(!m)return;
+  if(a==='copymsg')return zCopy(m.text,b);
+  if(a==='regen')return zRegen();
+  const s=zParse(m.text).filter(x=>x.type==='code')[bi];if(!s)return;
+  if(a==='copycode')zCopy(s.code,b);else if(a==='run')zPreview(mi,bi,'pop');else if(a==='tab')zPreview(mi,bi,'tab');else if(a==='full')zPreview(mi,bi,'full');
+});
+
+/* ---- Preview HTML: dalam sandbox, link href pindah antar-file dari kode AI ---- */
+function zHook(){
+  window.__arczGo=function(h){parent.postMessage({arcz:'nav',href:String(h)},'*')};
+  document.addEventListener('click',function(e){
+    var a=e.target&&e.target.closest?e.target.closest('a[href]'):null;if(!a)return;
+    var h=a.getAttribute('href');
+    if(!h||h.charAt(0)==='#'||/^(javascript|mailto|tel|data|blob):/i.test(h))return;
+    e.preventDefault();parent.postMessage({arcz:'nav',href:h},'*');
+  },true);
+  window.addEventListener('message',function(e){
+    var d=e.data;if(!d||d.arcz!=='goto')return;
+    var el=document.getElementById(d.id);if(el)el.scrollIntoView({behavior:'smooth'});
+  });
+}
+function zViewer(){
+  var D=window.__D,F=D.files,en=D.entry,fr=document.getElementById('f'),pt=document.getElementById('p'),bk=document.getElementById('b'),st=[],cur=null;
+  function E(s){return String(s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
+  function cl(p){var o=[];p.split('/').forEach(function(s){if(!s||s==='.')return;if(s==='..')o.pop();else o.push(s)});return o.join('/')}
+  function find(p){
+    if(!p)return en;if(F[p]!==undefined)return p;
+    var t=[p+'.html',p+'/index.html'];for(var i=0;i<t.length;i++)if(F[t[i]]!==undefined)return t[i];
+    var b=p.split('/').pop().toLowerCase(),n=Object.keys(F);
+    for(var j=0;j<n.length;j++){var x=n[j].split('/').pop().toLowerCase();if(x===b||x.replace(/\.html?$/,'')===b)return n[j]}
+    return null;
+  }
+  function asset(src,dir){
+    if(/^(https?:)?\/\/|^data:/i.test(src))return null;
+    var p=src.split('#')[0].split('?')[0],f=p.charAt(0)==='/'?cl(p):cl(dir?dir+'/'+p:p);
+    if(F[f]!==undefined)return F[f];
+    var b=f.split('/').pop();for(var n in F)if(n.split('/').pop()===b)return F[n];return null;
+  }
+  function build(name){
+    var h=F[name],dir=name.split('/').slice(0,-1).join('/');
+    h=h.replace(/<link\b[^>]*?href=["']([^"']+)["'][^>]*>/gi,function(m,s){if(!/stylesheet/i.test(m))return m;var c=asset(s,dir);return c===null?m:'<style>'+c+'</style>'});
+    h=h.replace(/<script\b([^>]*?)src=["']([^"']+)["']([^>]*)>\s*<\/script>/gi,function(m,a,s,b){var c=asset(s,dir);return c===null?m:'<script'+a+b+'>'+c.replace(/<\/script/gi,'<\\/script')+'<\/script>'});
+    h=h.replace(/(^|[^\w$.])((?:window\.|document\.|top\.|parent\.|self\.)?location(?:\.href)?)\s*=(?!=)\s*(['"`])((?:(?!\3)[^\\\n])*)\3/g,'$1__arczGo($3$4$3)');
+    h=h.replace(/(^|[^\w$.])((?:window\.|document\.|top\.|parent\.|self\.)?location)\.(?:assign|replace)\(\s*(['"`])((?:(?!\3)[^\\\n])*)\3\s*\)/g,'$1__arczGo($3$4$3)');
+    var s='<script>'+D.hook+'<\/script>';
+    if(/<head[^>]*>/i.test(h))h=h.replace(/<head[^>]*>/i,function(m){return m+s});
+    else if(/<html[^>]*>/i.test(h))h=h.replace(/<html[^>]*>/i,function(m){return m+s});
+    else h=s+h;
+    return h;
+  }
+  function show(label,html,push){
+    if(push&&cur!==null&&F[cur]!==undefined)st.push(cur);
+    cur=label;pt.textContent='/'+label;fr.srcdoc=html;bk.disabled=!st.length;
+  }
+  bk.onclick=function(){var n=st.pop();if(n!==undefined)show(n,build(n))};
+  document.getElementById('r').onclick=function(){if(F[cur]!==undefined)fr.srcdoc=build(cur)};
+  document.getElementById('fs').onclick=function(){
+    if(parent!==window)parent.postMessage({arcz:'fs'},'*');
+    else{var d=document.documentElement;if(document.fullscreenElement)document.exitFullscreen();else if(d.requestFullscreen)d.requestFullscreen()}
+  };
+  window.addEventListener('message',function(e){
+    if(e.source!==fr.contentWindow)return;var d=e.data;if(!d||d.arcz!=='nav')return;
+    var h=String(d.href);
+    if(/^(https?:)?\/\//i.test(h)){window.open(h,'_blank');return}
+    var i=h.indexOf('#'),hs=i>-1?h.slice(i+1):'',p=h.split('#')[0].split('?')[0],dir=F[cur]!==undefined?cur.split('/').slice(0,-1).join('/'):'';
+    var a=p===''?'':p.charAt(0)==='/'?cl(p):cl(dir?dir+'/'+p:p);
+    if(p===''&&hs){fr.contentWindow.postMessage({arcz:'goto',id:hs},'*');return}
+    var f=find(a);
+    if(f===null&&F[cur]!==undefined&&(F[cur].indexOf('id="'+a+'"')>-1||F[cur].indexOf("id='"+a+"'")>-1)){fr.contentWindow.postMessage({arcz:'goto',id:a},'*');return}
+    if(f===null){show('?','<!DOCTYPE html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><body style="font-family:system-ui;padding:28px;color:#0f1b3d;line-height:1.6"><h2>Halaman tidak ditemukan</h2><p>Tidak ada file untuk <code>/'+E(a)+'</code> di kode yang dikirim AI.</p><p>File yang tersedia: '+Object.keys(F).map(E).join(', ')+'</p>',true);return}
+    if(f===cur){fr.srcdoc=build(cur);return}
+    show(f,build(f),true);
+  });
+  show(en,build(en));
+}
+function zBuild(files,entry){
+  const d=JSON.stringify({files,entry,hook:'('+zHook.toString()+')()'}).replace(/</g,'\\u003c').replace(/\u2028/g,'\\u2028').replace(/\u2029/g,'\\u2029');
+  return '<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Pratinjau</title><style>html,body{height:100%;margin:0}body{display:flex;flex-direction:column;font:14px system-ui;background:#fff}.bar{display:flex;align-items:center;gap:6px;padding:6px 8px;background:#eef4ff;border-bottom:1px solid #cfe0ff}.bar button{border:0;background:#fff;border-radius:8px;padding:5px 10px;font-size:15px;cursor:pointer}.bar button:disabled{opacity:.4}#p{flex:1;color:#3b4a6e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}#f{flex:1;border:0;width:100%;background:#fff}</style></head><body><div class="bar"><button id="b" title="Kembali">‹</button><span id="p"></span><button id="r" title="Muat ulang">↻</button><button id="fs" title="Layar penuh">⛶</button></div><iframe id="f" sandbox="allow-scripts allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox allow-pointer-lock"></iframe><script>window.__D='+d+';('+zViewer.toString()+')();<\/script></body></html>';
+}
+function zFiles(mi,bi){
+  const f={},code=t=>zParse(t).filter(s=>s.type==='code'),put=s=>{const n=s.name||(s.lang==='html'?'index.html':'');if(n)f[n]=s.code};
+  S.chat.forEach((m,i)=>{if(m.role==='ai'&&i!==mi)code(m.text).forEach(put)});
+  const mine=code(S.chat[mi].text);mine.forEach(put);
+  const c=mine[bi],en=c.name||'index.html';f[en]=c.code;return{files:f,entry:en};
+}
+function zPreview(mi,bi,mode){
+  const {files,entry}=zFiles(mi,bi),v=zBuild(files,entry);
+  if(mode==='tab'){const u=URL.createObjectURL(new Blob([v],{type:'text/html'}));if(!window.open(u,'_blank'))toast('Pop-up diblokir','Izinkan pop-up untuk membuka tab baru.','err');return}
+  const bg=document.createElement('div');bg.className='modal-bg';
+  bg.innerHTML=`<div class="pv glass"><div class="pv-h"><b>Pratinjau HTML</b><span style="flex:1"></span><button class="btn btn-soft btn-sm" data-p="tab">${ic('ext')}<span>Tab baru</span></button><button class="btn btn-soft btn-sm" data-p="fs">${ic('full')}<span>Layar penuh</span></button><button class="btn btn-danger btn-sm" data-p="x">${ic('x')}<span>Tutup</span></button></div><iframe class="pv-f" allow="fullscreen" sandbox="allow-scripts allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox allow-pointer-lock"></iframe></div>`;
+  const pv=bg.firstChild,fr=pv.querySelector('iframe');fr.srcdoc=v;document.body.appendChild(bg);
+  const full=on=>{pv.classList.toggle('full',on);bg.classList.toggle('isfull',on);if(on&&bg.requestFullscreen)bg.requestFullscreen().catch(()=>{});else if(!on&&document.fullscreenElement)document.exitFullscreen().catch(()=>{})};
+  const fsc=()=>{if(!document.fullscreenElement){pv.classList.remove('full');bg.classList.remove('isfull')}};
+  const msg=e=>{if(e.source===fr.contentWindow&&e.data&&e.data.arcz==='fs')full(!pv.classList.contains('full'))};
+  const key=e=>{if(e.key==='Escape')close()};
+  function close(){window.removeEventListener('message',msg);document.removeEventListener('fullscreenchange',fsc);document.removeEventListener('keydown',key);if(document.fullscreenElement)document.exitFullscreen().catch(()=>{});bg.remove()}
+  window.addEventListener('message',msg);document.addEventListener('fullscreenchange',fsc);document.addEventListener('keydown',key);
+  pv.querySelector('.pv-h').onclick=e=>{const b=e.target.closest('[data-p]');if(!b)return;const a=b.dataset.p;if(a==='x')close();else if(a==='fs')full(!pv.classList.contains('full'));else zPreview(mi,bi,'tab')};
+  if(mode==='full')full(true);
+}
+
+/* ---- Pin chat: di-pin = disimpan ke server; tidak di-pin / unpin = hanya localStorage ---- */
+function loadLocalChat(){
+  S.chat=[];S.sid=newSid();S.pinned=false;
+  try{const r=JSON.parse(localStorage.getItem('arcz_chat_'+S.user.id)||'null');
+    if(Array.isArray(r))S.chat=r;else if(r&&Array.isArray(r.chat)){S.chat=r.chat;S.sid=r.sid||S.sid;S.pinned=!!r.pinned}}catch{}
+}
+function saveChat(){
+  try{localStorage.setItem('arcz_chat_'+S.user.id,JSON.stringify({sid:S.sid,pinned:!!S.pinned,chat:S.chat.slice(-60).map(m=>({...m,atts:(m.atts||[]).map(a=>({name:a.name}))}))}))}catch{}
+}
+async function saveServerLog(){
+  if(!S.pinned||!S.chat.length)return false;
+  try{
+    const msgs=S.chat.slice(-60).map(m=>m.role==='info'?{role:'info',html:m.html}:{role:m.role,text:m.text||'',atts:(m.atts||[]).map(a=>a.name)}),first=S.chat.find(m=>m.role==='user');
+    const {error}=await sb.from('chat_logs').upsert({member_id:S.user.id,session_id:S.sid,title:((first&&first.text)||'Chat').slice(0,60),messages:msgs,updated_at:new Date().toISOString()},{onConflict:'member_id,session_id'});
+    if(error)throw error;return true;
+  }catch(e){console.error('simpan chat gagal',e);return false}
+}
+function restoreLog(row){
+  if(!row)return;
+  S.chat=(row.messages||[]).map(m=>m.role==='info'?{role:'info',html:m.html}:{role:m.role,text:m.text,atts:(m.atts||[]).map(n=>({name:n}))});
+  S.sid=row.session_id;S.pinned=true;saveChat();renderMsgs();go('chat');
+}
+function renderPin(){
+  const b=$('pinBtn');if(!b)return;
+  b.className='btn btn-sm '+(S.pinned?'btn-primary':'btn-soft');
+  b.innerHTML=ic('pin')+'<span>'+(S.pinned?'Dipin':'Pin')+'</span>';
+  b.title=S.pinned?'Lepas pin: hapus dari server, tetap di perangkat ini':'Pin: simpan chat ini ke server';
+}
+async function togglePin(){
+  if(S.pinBusy)return;S.pinBusy=true;
+  try{
+    if(S.pinned){
+      const {error}=await sb.from('chat_logs').delete().eq('member_id',S.user.id).eq('session_id',S.sid);
+      if(error)return toast('Gagal lepas pin',esc(error.message),'err');
+      S.pinned=false;saveChat();renderPin();toast('Pin dilepas','Chat ini sekarang hanya tersimpan di perangkat ini.');return;
+    }
+    if(!S.chat.length)return toast('Chat kosong','Kirim pesan dulu sebelum di-pin.');
+    if(!S.opts.saveLogs)return toast('Penyimpanan dimatikan','Admin menonaktifkan penyimpanan chat ke server.','err');
+    const {data}=await sb.from('chat_logs').select('session_id').eq('member_id',S.user.id);
+    if((data||[]).filter(r=>r.session_id!==S.sid).length>=MAX_CHAT_LOGS)return toast('Batas pin tercapai','Maksimal '+MAX_CHAT_LOGS+' chat. Lepas pin chat lain di menu Pemakaian.','err');
+    S.pinned=true;
+    if(!(await saveServerLog())){S.pinned=false;return toast('Gagal menyimpan','Chat belum bisa disimpan ke server.','err')}
+    saveChat();renderPin();toast('Chat di-pin','Chat ini tersimpan di server.');
+  }finally{S.pinBusy=false;renderPin()}
+}
+async function syncPinned(){
+  if(!S.pinned)return;
+  try{const {data}=await sb.from('chat_logs').select('id').eq('member_id',S.user.id).eq('session_id',S.sid).maybeSingle();if(!data){S.pinned=false;saveChat();renderPin()}}catch{}
+}
+function newChat(){
+  if(S.chat.length&&!S.pinned&&!confirm('Chat ini belum di-pin, jadi tidak akan tersimpan. Mulai chat baru?'))return;
+  S.chat=[];S.sid=newSid();S.pinned=false;saveChat();renderMsgs();renderPin();
+}
+const Z_go=go;
+go=function(k){Z_go(k);if(k==='chat'){syncPinned();renderPin()}};
+const Z_ea=enterApp;
+enterApp=async function(){
+  if(!$('pinBtn')){const b=document.createElement('button');b.id='pinBtn';b.style.marginLeft='auto';b.onclick=togglePin;$('clearChat').before(b);$('clearChat').style.marginLeft='0'}
+  $('clearChat').innerHTML=ic('plus')+'<span class="lbl">Chat baru</span>';
+  await Z_ea();renderPin();syncPinned();
+};
+$('clearChat').onclick=newChat;
+
+/* ---- Kirim / buat ulang ---- */
+function buildContent(text,atts){
+  let t=text;const im=[];
+  atts.forEach(a=>{
+    if(a.kind==='text')t+=`\n\n[File: ${a.name}]\n${a.text}`;
+    else if(a.kind==='image')im.push(a);
+    else if(!a.kind)t+=`\n\n[Lampiran: ${a.name} (isi tidak tersedia lagi)]`;
+    else t+=`\n\n[Lampiran: ${a.name}, ${a.type||'tipe tidak diketahui'}, ${(a.size/1024).toFixed(1)} KB${a.url?', tautan: '+a.url:''}]`;
+  });
+  return im.length?[{type:'text',text:t},...im.map(a=>({type:'image_url',image_url:{url:a.dataUrl}}))]:t;
+}
+async function zPre(){
+  if(!S.api.key||!S.api.base){toast('API belum diatur',isAdmin()?'Isi API key dan base URL di menu API.':'Minta admin mengisi API key dan base URL.','err');return null}
+  await refreshUser();
+  const u=S.user,m=curModel(),tier=tierOf(m),real=resolveModel(m),no=(t,b)=>{toast(t,b,'err');return null};
+  if(!isAdmin()){
+    if(!u.active)return no('Akun nonaktif','Hubungi admin.');
+    if(isExpired(u))return no('Akun kedaluwarsa','Masa berlaku akun sudah habis.');
+    if(tier==='premium'&&!u.premium)return no('Khusus premium','Model ini butuh akses premium. Minta admin mengaktifkannya.');
+    const k=tier==='other'?'other':'auto';
+    if(u['used_'+k]>=u['limit_'+k])return no('Kuota habis',k==='auto'?'Pemakaian Auto sudah habis.':'Pemakaian AI lain sudah habis.');
+    if(Number(u.used_tokens||0)>=Number(u.limit_tokens||0))return no('Token habis','Sisa token kamu sudah habis. Minta admin menambah limit.');
+  }
+  return {u,tier,real};
+}
+async function send(){
+  if(S.busy)return;const text=ta.value.trim();if(!text&&!S.atts.length)return;
+  if(S.atts.some(a=>a.uploading)){toast('Tunggu sebentar','File masih diunggah.');return}
+  const c=await zPre();if(!c)return;
+  const atts=S.atts.slice();S.chat.push({role:'user',text,atts});S.atts=[];renderAtts();ta.value='';ta.style.height='auto';
+  await zRun(atts,c);
+}
+async function zRegen(){
+  if(S.busy)return;let i=S.chat.length-1;while(i>=0&&S.chat[i].role!=='user')i--;if(i<0)return;
+  const c=await zPre();if(!c)return;
+  S.chat.splice(i+1);await zRun(S.chat[i].atts||[],c);
+}
+async function zRun(atts,c){
+  const {u,tier,real}=c;S.busy=true;renderMsgs();
+  const hist=S.chat.filter(x=>x.role!=='info').slice(-16);
+  const messages=hist.map((x,i)=>({role:x.role==='user'?'user':'assistant',content:(x.role==='user'&&i===hist.length-1)?buildContent(x.text,atts):x.text}));
+  try{
+    const {data:fresh}=await sb.from('members').select('tokens_used,used_auto,used_other,used_tokens,limit_tokens').eq('id',u.id).single();
+    const before=Number(fresh.tokens_used||0);
+    const res=await fetch(S.api.base.replace(/\/+$/,'')+'/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+S.api.key},body:JSON.stringify({model:real.id,messages})});
+    const j=await res.json().catch(()=>({}));
+    if(!res.ok)throw new Error((j.error&&(j.error.message||j.error))||('HTTP '+res.status));
+    const reply=j.choices&&j.choices[0]&&j.choices[0].message?j.choices[0].message.content:'';
+    const raw=(j.usage&&j.usage.total_tokens)?j.usage.total_tokens:Math.ceil((JSON.stringify(messages).length+String(reply).length)/4);
+    const mult=Number(real.mult)||1,diff=Math.ceil(raw*mult),after=before+diff;
+    const patch={tokens_used:after,used_tokens:Number(fresh.used_tokens||0)+diff};
+    if(!isAdmin()){const k=tier==='other'?'used_other':'used_auto';patch[k]=Number(fresh[k]||0)+1}
+    await sb.from('members').update(patch).eq('id',u.id);
+    await sb.from('usage_logs').insert({member_id:u.id,model:real.id,tier,tokens_before:before,tokens_after:after,tokens_used:diff});
+    const left=Math.max(Number(fresh.limit_tokens||0)-patch.used_tokens,0);
+    S.chat.push({role:'ai',text:typeof reply==='string'?reply:JSON.stringify(reply)});
+    S.chat.push({role:'info',html:`Token: ${fmt(before)} → ${fmt(after)} = <b>${fmt(diff)}</b> terpakai${mult>1?` (${fmt(raw)} × ${mult})`:''}${isAdmin()?'':` · sisa <b>${fmt(left)}</b>`}`});
+    toast('Pemakaian token',`Sebelum <b>${fmt(before)}</b><br>Sesudah <b>${fmt(after)}</b><br>Selisih <b>${fmt(diff)} token</b>${isAdmin()?'':`<br>Sisa <b>${fmt(left)}</b> token`}`);
+    refreshUser();
+  }catch(e){
+    console.error(e);S.chat.push({role:'ai',text:'Permintaan gagal: '+(e.message||e)});toast('Gagal memanggil AI',esc(e.message||String(e)),'err');
+  }finally{S.busy=false;saveChat();renderMsgs();saveServerLog()}
+}
+$('sendBtn').onclick=send;
+</script>
 
 <script>
 /* ============ Konfigurasi ============ */
