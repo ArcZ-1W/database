@@ -110,6 +110,10 @@ button{cursor:pointer;border:0;background:none}
 /* ---- Chat ---- */
 .chat-top{padding:14px 20px;display:flex;align-items:center;gap:12px;border-bottom:1px solid var(--line)}
 .chat-top select{max-width:260px}
+.tokrow{padding:10px 20px 0}
+.tokrow .meter{margin:0 0 10px}
+.tokrow .bar{height:7px}
+.tokrow .top{margin-bottom:4px}
 .msgs{flex:1;min-height:0;overflow:auto;padding:22px 24px;display:flex;flex-direction:column;gap:16px}
 .msg{max-width:min(760px,88%);padding:13px 16px;border-radius:18px;line-height:1.6;font-size:15px;word-wrap:break-word;overflow-wrap:anywhere}
 .msg.user{align-self:flex-end;background:linear-gradient(180deg,var(--blue-2),var(--blue));color:#fff;border-bottom-right-radius:6px}
@@ -161,10 +165,20 @@ button{cursor:pointer;border:0;background:none}
 .tbl th{color:var(--ink-3);font-weight:500}
 .mrow{display:grid;grid-template-columns:1.4fr .8fr .6fr 1.5fr auto;gap:8px;align-items:center;margin-bottom:8px}
 .sec-title{font-size:13px;font-weight:600;color:var(--ink-2);margin:18px 0 8px}
+.logitem{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 4px;border-bottom:1px solid var(--line)}
+.logitem:last-child{border-bottom:0}
+.logitem b{display:block;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:260px}
+.logitem small{color:var(--ink-3);font-size:12.5px}
+.lmsg{font-size:13.5px;line-height:1.55;padding:6px 0;border-top:1px solid var(--line);white-space:pre-wrap;overflow-wrap:anywhere}
+.lmsg b{color:var(--blue);margin-right:6px}
+details.ldet{padding:10px 0;border-bottom:1px solid var(--line)}
+details.ldet summary{cursor:pointer;font-weight:600;font-size:14px;display:flex;justify-content:space-between;gap:10px}
+details.ldet summary small{color:var(--ink-3);font-weight:400}
 
 /* ---- Modal / toast ---- */
 .modal-bg{position:fixed;inset:0;background:rgba(15,27,61,.28);backdrop-filter:blur(6px);display:grid;place-items:center;padding:18px;z-index:50}
 .modal{width:100%;max-width:440px;max-height:92vh;overflow:auto;padding:26px;border-radius:24px}
+.modal.wide{max-width:640px}
 .modal h3{font-size:19px;margin-bottom:16px;letter-spacing:-.3px}
 #toasts{position:fixed;top:calc(16px + env(safe-area-inset-top,0px));right:16px;display:flex;flex-direction:column;gap:10px;z-index:80;width:min(360px,calc(100vw - 32px))}
 .toast{padding:14px 16px;border-radius:16px;animation:tin .25s ease-out}
@@ -188,10 +202,9 @@ button{cursor:pointer;border:0;background:none}
   .mrow{grid-template-columns:1fr 1fr}
   .row{flex-direction:column;gap:0}
   .chat-top{padding:10px 12px}
-  .m-only{display:flex!important}
+  .tokrow{padding:8px 12px 0}
   #toasts{left:16px;right:16px;width:auto}
 }
-.m-only{display:none}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
 </head>
@@ -252,6 +265,7 @@ button{cursor:pointer;border:0;background:none}
         <span id="modelTag"></span>
         <button class="btn btn-soft btn-sm" id="clearChat" style="margin-left:auto">Chat baru</button>
       </div>
+      <div class="tokrow" id="tokRow"></div>
       <div class="msgs" id="msgs"></div>
       <div class="composer">
         <div class="attrow" id="attrow"></div>
@@ -268,6 +282,12 @@ button{cursor:pointer;border:0;background:none}
     <section class="view" id="v-usage">
       <div class="head"><h2>Pemakaian</h2></div>
       <div class="scroll" id="usageBody"></div>
+    </section>
+
+    <!-- profile -->
+    <section class="view" id="v-profile">
+      <div class="head"><h2>Profil</h2></div>
+      <div class="scroll" id="profileBody"></div>
     </section>
 
     <!-- admin -->
@@ -292,6 +312,9 @@ const ADMIN_USER = 'admin', ADMIN_PASS = 'x';
 const BUCKET = 'arcz-files';
 const FACE_MODELS = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.12/model/';
 const FACE_THRESHOLD = 0.5;
+const MAX_CHAT_LOGS = 2;               // jumlah percakapan yang disimpan di server per member
+const DEFAULT_TOKEN_LIMIT = 100000;
+const PREMIUM_RE = /opus|o1|o3|gpt-5|ultra|-pro/i;   // tebakan awal model premium saat ambil model otomatis
 const DEFAULT_MODELS = [
   {id:'auto', label:'Auto', mult:1, auto:true},
   {id:'gpt-4o-mini', label:'GPT-4o mini', mult:1, auto:false},
@@ -300,15 +323,17 @@ const DEFAULT_MODELS = [
 
 const sb = supabase.createClient(SB_URL, SB_KEY, {auth:{persistSession:false}});
 const $ = id => document.getElementById(id);
-const S = {user:null, api:{key:'',base:''}, models:DEFAULT_MODELS, chat:[], atts:[], busy:false, tab:'chat'};
+const S = {user:null, api:{key:'',base:''}, models:DEFAULT_MODELS, opts:{saveLogs:true}, chat:[], sid:'', atts:[], busy:false, tab:'chat'};
 
 /* ============ Util ============ */
 const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fmt = n => Number(n||0).toLocaleString('id-ID');
+const newSid = () => (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : Date.now()+'-'+Math.random().toString(36).slice(2);
 const DIAMOND = '<svg class="diamond" viewBox="0 0 24 24" aria-label="Premium"><path d="M6 3h12l4 6-10 12L2 9z"/><path d="M2 9h20M9 3l3 18M15 3l-3 18" fill="none" stroke="#fff" stroke-opacity=".7"/></svg>';
 const ICON = {
   chat:'<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.4A8 8 0 1 1 21 12z"/>',
   chart:'<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
+  user:'<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
   users:'<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M18 14.5a6.5 6.5 0 0 1 3.5 5.5"/>',
   gear:'<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/>',
   x:'<path d="M6 6l12 12M18 6L6 18"/>',
@@ -339,6 +364,10 @@ function meter(label, used, total, extra){
   const cls = pct>=90?'bad':pct>=70?'warn':'';
   return `<div class="meter"><div class="top"><b>${label}</b><span>${extra||`${fmt(used)} / ${fmt(total)}`}</span></div><div class="bar ${cls}"><i style="width:${pct}%"></i></div></div>`;
 }
+function tokMeter(u, label){
+  const lim = Number(u.limit_tokens||0), used = Number(u.used_tokens||0);
+  return meter(label||'Token', used, lim, `${fmt(Math.max(lim-used,0))} tersisa dari ${fmt(lim)}`);
+}
 function daysMeter(u){
   const d = daysLeft(u);
   if(d===null) return '';
@@ -348,6 +377,7 @@ function daysMeter(u){
   const cls = pct<=15?'bad':pct<=35?'warn':'';
   return `<div class="meter"><div class="top"><b>Masa berlaku</b><span>${left} dari ${total} hari</span></div><div class="bar ${cls}"><i style="width:${pct}%"></i></div></div>`;
 }
+const dt = (v,o) => new Date(v).toLocaleString('id-ID', o||{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
 
 /* ============ Boot ============ */
 async function boot(){
@@ -484,29 +514,35 @@ async function doVerify(run){
 async function enterApp(){
   show('app');
   await loadSettings();
-  try{ S.chat = JSON.parse(localStorage.getItem('arcz_chat_'+S.user.id)||'[]'); }catch{ S.chat=[]; }
-  buildNav(); renderModels(); renderMsgs(); renderSide();
+  loadLocalChat();
+  buildNav(); renderModels(); renderMsgs(); renderSide(); renderTok(); renderWho();
   go('chat');
-  $('av').textContent = (S.user.display_name||S.user.username)[0].toUpperCase();
-  $('wname').innerHTML = esc(S.user.display_name||S.user.username) + (S.user.premium&&!isAdmin()?DIAMOND:'');
+}
+function doLogout(){ sessionStorage.removeItem('arcz_uid'); location.reload(); }
+$('logout').onclick = doLogout;
+
+function renderWho(){
+  const n = S.user.display_name || S.user.username;
+  $('av').textContent = n[0].toUpperCase();
+  $('wname').innerHTML = esc(n) + (S.user.premium&&!isAdmin()?DIAMOND:'');
   $('wrole').textContent = isAdmin()?'Admin':'Member';
 }
-$('logout').onclick = () => { sessionStorage.removeItem('arcz_uid'); location.reload(); };
 
 async function loadSettings(){
   const {data} = await sb.from('settings').select('*');
   (data||[]).forEach(r => {
     if(r.key==='api') S.api = {key:r.value.key||'', base:r.value.base||''};
     if(r.key==='models' && Array.isArray(r.value) && r.value.length) S.models = r.value;
+    if(r.key==='options' && r.value) S.opts = {saveLogs: r.value.saveLogs!==false};
   });
 }
 async function refreshUser(){
   const {data} = await sb.from('members').select('*').eq('id',S.user.id).maybeSingle();
-  if(data){ S.user = data; renderSide(); if(S.tab==='usage') renderUsage(); }
+  if(data){ S.user = data; renderSide(); renderTok(); renderWho(); if(S.tab==='usage') renderUsage(); }
 }
 
 function buildNav(){
-  const items = [['chat','Chat','chat'],['usage','Pemakaian','chart']];
+  const items = [['chat','Chat','chat'],['usage','Pemakaian','chart'],['profile','Profil','user']];
   if(isAdmin()) items.push(['admin','Member','users'],['settings','API','gear']);
   $('nav').innerHTML = items.map(([k,l,i]) => `<button data-k="${k}">${ic(i)}<span>${l}</span></button>`).join('');
   $('nav').querySelectorAll('button').forEach(b => b.onclick = () => go(b.dataset.k));
@@ -516,6 +552,7 @@ function go(k){
   document.querySelectorAll('.view').forEach(v => v.classList.toggle('on', v.id==='v-'+k));
   $('nav').querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.k===k));
   if(k==='usage') renderUsage();
+  if(k==='profile') renderProfile();
   if(k==='admin') renderMembers();
   if(k==='settings') renderSettings();
   if(k==='chat') scrollDown();
@@ -526,20 +563,51 @@ function renderSide(){
   if(isAdmin()){ $('sideUsage').innerHTML = '<div style="font-size:13.5px;color:var(--ink-2);line-height:1.5">Admin tidak dibatasi kuota atau masa berlaku.</div>'; return; }
   const d = daysLeft(u);
   $('sideUsage').innerHTML =
+    tokMeter(u,'Token') +
     meter('Auto', u.used_auto, u.limit_auto) +
     meter('AI lain', u.used_other, u.limit_other) +
     `<div style="font-size:13px;color:var(--ink-2)">Sisa <b style="color:var(--blue)">${Math.max(d,0)}</b> hari</div>`;
+}
+function renderTok(){
+  const u = S.user, el = $('tokRow');
+  if(isAdmin()){ el.innerHTML = `<div style="font-size:12.5px;color:var(--ink-2);padding-bottom:10px">Admin · ${fmt(u.tokens_used)} token terpakai total</div>`; return; }
+  el.innerHTML = tokMeter(u,'Sisa token');
+}
+
+/* ============ Profil ============ */
+function renderProfile(){
+  const u = S.user;
+  $('profileBody').innerHTML = `
+  <div class="card" style="max-width:520px;margin-bottom:16px">
+    <h3>Akunmu</h3>
+    <div class="field"><label>Username</label><input class="input" value="${esc(u.username)}" disabled></div>
+    <div class="field"><label for="pname">Nama tampilan</label><input class="input" id="pname" value="${esc(u.display_name||'')}" placeholder="${esc(u.username)}"><small>Kosongkan untuk memakai username.</small></div>
+    <button class="btn btn-primary" id="psave">Simpan nama</button>
+  </div>
+  <button class="btn btn-danger" id="plogout">Keluar dari akun</button>`;
+  $('plogout').onclick = doLogout;
+  $('psave').onclick = async () => {
+    const name = $('pname').value.trim() || u.username;
+    const {error} = await sb.from('members').update({display_name:name}).eq('id',u.id);
+    if(error) return toast('Gagal menyimpan', esc(error.message), 'err');
+    S.user.display_name = name; renderWho(); toast('Nama disimpan', esc(name));
+  };
 }
 
 /* ============ Usage view ============ */
 async function renderUsage(){
   const u = S.user;
-  const {data:logs} = await sb.from('usage_logs').select('*').eq('member_id',u.id).order('created_at',{ascending:false}).limit(15);
+  const [{data:logs},{data:chats}] = await Promise.all([
+    sb.from('usage_logs').select('*').eq('member_id',u.id).order('created_at',{ascending:false}).limit(15),
+    sb.from('chat_logs').select('*').eq('member_id',u.id).order('updated_at',{ascending:false}).limit(MAX_CHAT_LOGS)
+  ]);
   let h = '<div class="grid">';
   if(isAdmin()){
     h += `<div class="card"><h3>Akun admin</h3><p style="color:var(--ink-2);line-height:1.6;font-size:14.5px">Tidak ada batas pemakaian atau masa berlaku.</p></div>`;
   } else {
     const d = Math.max(daysLeft(u),0);
+    const left = Math.max(Number(u.limit_tokens||0)-Number(u.used_tokens||0),0);
+    h += `<div class="card"><h3>Sisa token</h3><div class="daysbig"><b>${fmt(left)}</b><span>token tersisa</span></div>${tokMeter(u,'Terpakai')}</div>`;
     h += `<div class="card"><h3>Masa berlaku</h3><div class="daysbig"><b>${d}</b><span>hari tersisa</span></div>${daysMeter(u)}
           <small style="color:var(--ink-3)">Berakhir ${new Date(u.expires_at).toLocaleDateString('id-ID',{day:'numeric',month:'long',year:'numeric'})}</small></div>`;
     h += `<div class="card"><h3>Sisa pemakaian</h3>
@@ -548,11 +616,22 @@ async function renderUsage(){
       <div style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink-2);margin-top:4px">${DIAMOND}<span>${u.premium?'Akses AI premium aktif':'AI premium belum aktif untuk akunmu'}</span></div></div>`;
   }
   h += `<div class="card"><h3>Total token</h3><div class="daysbig"><b>${fmt(u.tokens_used)}</b><span>token terpakai</span></div></div></div>`;
-  h += `<div class="sec-title">Riwayat terakhir</div><div class="card" style="padding:8px 14px;overflow:auto">`;
+
+  h += `<div class="sec-title">Chat tersimpan (maks ${MAX_CHAT_LOGS})</div><div class="card" style="padding:8px 14px">`;
+  if(!chats || !chats.length) h += '<p style="padding:14px 4px;color:var(--ink-3);font-size:14px">Belum ada chat tersimpan.</p>';
+  else h += chats.map(c=>`<div class="logitem"><div style="min-width:0"><b>${esc(c.title||'Chat')}</b><small>${dt(c.updated_at)} · ${(c.messages||[]).filter(x=>x.role!=='info').length} pesan</small></div>
+    <div class="acts"><button class="btn btn-soft btn-sm" data-open="${c.id}">Buka</button><button class="btn btn-danger btn-sm" data-delchat="${c.id}">Hapus</button></div></div>`).join('');
+  h += '</div>';
+
+  h += `<div class="sec-title">Riwayat token</div><div class="card" style="padding:8px 14px;overflow:auto">`;
   if(!logs || !logs.length) h += '<p style="padding:14px 4px;color:var(--ink-3);font-size:14px">Belum ada pemakaian.</p>';
-  else h += `<table class="tbl"><tr><th>Waktu</th><th>Model</th><th>Sebelum</th><th>Sesudah</th><th>Selisih</th></tr>${logs.map(l=>`<tr><td>${new Date(l.created_at).toLocaleString('id-ID',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'})}</td><td>${l.tier==='premium'?DIAMOND+' ':''}${esc(l.model)}</td><td>${fmt(l.tokens_before)}</td><td>${fmt(l.tokens_after)}</td><td><b>${fmt(l.tokens_used)}</b></td></tr>`).join('')}</table>`;
+  else h += `<table class="tbl"><tr><th>Waktu</th><th>Model</th><th>Sebelum</th><th>Sesudah</th><th>Selisih</th></tr>${logs.map(l=>`<tr><td>${dt(l.created_at)}</td><td>${l.tier==='premium'?DIAMOND+' ':''}${esc(l.model)}</td><td>${fmt(l.tokens_before)}</td><td>${fmt(l.tokens_after)}</td><td><b>${fmt(l.tokens_used)}</b></td></tr>`).join('')}</table>`;
   h += '</div>';
   $('usageBody').innerHTML = h;
+  $('usageBody').querySelectorAll('[data-open]').forEach(b=>b.onclick=()=>restoreLog(chats.find(c=>c.id===b.dataset.open)));
+  $('usageBody').querySelectorAll('[data-delchat]').forEach(b=>b.onclick=async()=>{
+    await sb.from('chat_logs').delete().eq('id',b.dataset.delchat); renderUsage();
+  });
 }
 
 /* ============ Chat ============ */
@@ -563,6 +642,11 @@ function renderModels(){
   updModelTag();
 }
 function curModel(){ return S.models[+$('modelSel').value] || S.models[0]; }
+/* Auto: pakai model pertama yang bertanda Auto (bukan premium); jika tidak ada, kirim id apa adanya */
+function resolveModel(m){
+  if(m.id!=='auto') return m;
+  return S.models.find(x=>x.id!=='auto' && x.id && x.auto && x.mult<=10) || m;
+}
 function updModelTag(){
   const m = curModel(), t = tierOf(m);
   $('modelTag').innerHTML = t==='premium' ? `<span class="tag" style="display:inline-flex;gap:5px;align-items:center">${DIAMOND}Premium</span>` : '';
@@ -600,8 +684,37 @@ function renderMsgs(){
   scrollDown();
 }
 function scrollDown(){ const e=$('msgs'); requestAnimationFrame(()=>e.scrollTop=e.scrollHeight); }
-function saveChat(){ try{ localStorage.setItem('arcz_chat_'+S.user.id, JSON.stringify(S.chat.slice(-60).map(m=>({...m,atts:(m.atts||[]).map(a=>({name:a.name}))})))); }catch{} }
-$('clearChat').onclick = () => { S.chat=[]; saveChat(); renderMsgs(); };
+
+/* ---- penyimpanan chat: localStorage (penuh) + server (maks 2 percakapan) ---- */
+function loadLocalChat(){
+  try{
+    const raw = JSON.parse(localStorage.getItem('arcz_chat_'+S.user.id)||'null');
+    if(Array.isArray(raw)){ S.chat = raw; S.sid = newSid(); }
+    else if(raw && Array.isArray(raw.chat)){ S.chat = raw.chat; S.sid = raw.sid || newSid(); }
+    else { S.chat = []; S.sid = newSid(); }
+  }catch{ S.chat = []; S.sid = newSid(); }
+}
+function saveChat(){
+  try{ localStorage.setItem('arcz_chat_'+S.user.id, JSON.stringify({sid:S.sid, chat:S.chat.slice(-60).map(m=>({...m,atts:(m.atts||[]).map(a=>({name:a.name}))}))})); }catch{}
+}
+async function saveServerLog(){
+  if(!S.opts.saveLogs || !S.chat.length) return;
+  try{
+    const msgs = S.chat.slice(-60).map(m=> m.role==='info' ? {role:'info',html:m.html} : {role:m.role,text:m.text||'',atts:(m.atts||[]).map(a=>a.name)});
+    const first = S.chat.find(m=>m.role==='user');
+    const title = ((first&&first.text)||'Chat').slice(0,60);
+    await sb.from('chat_logs').upsert({member_id:S.user.id, session_id:S.sid, title, messages:msgs, updated_at:new Date().toISOString()}, {onConflict:'member_id,session_id'});
+    const {data} = await sb.from('chat_logs').select('id').eq('member_id',S.user.id).order('updated_at',{ascending:false});
+    const old = (data||[]).slice(MAX_CHAT_LOGS).map(r=>r.id);
+    if(old.length) await sb.from('chat_logs').delete().in('id',old);
+  }catch(e){ console.error('log chat gagal', e); }
+}
+function restoreLog(row){
+  if(!row) return;
+  S.chat = (row.messages||[]).map(m=> m.role==='info' ? {role:'info',html:m.html} : {role:m.role,text:m.text,atts:(m.atts||[]).map(n=>({name:n}))});
+  S.sid = row.session_id; saveChat(); renderMsgs(); go('chat');
+}
+$('clearChat').onclick = () => { S.chat=[]; S.sid=newSid(); saveChat(); renderMsgs(); };
 
 const ta = $('prompt');
 ta.addEventListener('input', () => { ta.style.height='auto'; ta.style.height=Math.min(ta.scrollHeight,150)+'px'; });
@@ -655,13 +768,14 @@ async function send(){
   if(!S.api.key || !S.api.base){ toast('API belum diatur', isAdmin()?'Isi API key dan base URL di menu API.':'Minta admin mengisi API key dan base URL.', 'err'); return; }
 
   await refreshUser();
-  const u = S.user, m = curModel(), tier = tierOf(m);
+  const u = S.user, m = curModel(), tier = tierOf(m), real = resolveModel(m);
   if(!isAdmin()){
     if(!u.active) return toast('Akun nonaktif','Hubungi admin.','err');
     if(isExpired(u)) return toast('Akun kedaluwarsa','Masa berlaku akun sudah habis.','err');
     if(tier==='premium' && !u.premium) return toast('Khusus premium','Model ini butuh akses premium. Minta admin mengaktifkannya.','err');
     const kind = tier==='other' ? 'other' : 'auto';
     if(u['used_'+kind] >= u['limit_'+kind]) return toast('Kuota habis', kind==='auto'?'Pemakaian Auto sudah habis.':'Pemakaian AI lain sudah habis.', 'err');
+    if(Number(u.used_tokens||0) >= Number(u.limit_tokens||0)) return toast('Token habis','Sisa token kamu sudah habis. Minta admin menambah limit.','err');
   }
 
   const atts = S.atts.slice();
@@ -673,37 +787,38 @@ async function send(){
   const messages = history.map((x,i)=>({role:x.role==='user'?'user':'assistant', content: (x.role==='user' && i===history.length-1) ? buildContent(x.text, atts) : x.text}));
 
   try{
-    // token sebelum
-    const {data:fresh} = await sb.from('members').select('tokens_used,used_auto,used_other').eq('id',u.id).single();
+    const {data:fresh} = await sb.from('members').select('tokens_used,used_auto,used_other,used_tokens,limit_tokens').eq('id',u.id).single();
     const before = Number(fresh.tokens_used||0);
 
     const res = await fetch(S.api.base.replace(/\/+$/,'') + '/chat/completions', {
       method:'POST',
       headers:{'Content-Type':'application/json','Authorization':'Bearer '+S.api.key},
-      body: JSON.stringify({model:m.id, messages})
+      body: JSON.stringify({model:real.id, messages})
     });
     const j = await res.json().catch(()=>({}));
     if(!res.ok) throw new Error((j.error&&(j.error.message||j.error)) || ('HTTP '+res.status));
     const reply = j.choices && j.choices[0] && j.choices[0].message ? j.choices[0].message.content : '';
-    const used = (j.usage && j.usage.total_tokens) ? j.usage.total_tokens : Math.ceil((JSON.stringify(messages).length + String(reply).length)/4);
-    const after = before + used;
-    const diff = after - before;
+    const raw = (j.usage && j.usage.total_tokens) ? j.usage.total_tokens : Math.ceil((JSON.stringify(messages).length + String(reply).length)/4);
+    const mult = Number(real.mult)||1;
+    const diff = Math.ceil(raw * mult);            // token yang dipotong dari kuota (sudah dikali kelipatan model)
+    const after = before + diff;
 
-    const patch = {tokens_used: after};
+    const patch = {tokens_used: after, used_tokens: Number(fresh.used_tokens||0) + diff};
     if(!isAdmin()){ const k = tier==='other'?'used_other':'used_auto'; patch[k] = Number(fresh[k]||0) + 1; }
     await sb.from('members').update(patch).eq('id',u.id);
-    await sb.from('usage_logs').insert({member_id:u.id, model:m.id, tier, tokens_before:before, tokens_after:after, tokens_used:diff});
+    await sb.from('usage_logs').insert({member_id:u.id, model:real.id, tier, tokens_before:before, tokens_after:after, tokens_used:diff});
 
+    const left = Math.max(Number(fresh.limit_tokens||0) - patch.used_tokens, 0);
     S.chat.push({role:'ai', text: typeof reply==='string' ? reply : JSON.stringify(reply)});
-    S.chat.push({role:'info', html:`Token: ${fmt(before)} → ${fmt(after)} = <b>${fmt(diff)}</b> token terpakai`});
-    toast('Pemakaian token', `Sebelum <b>${fmt(before)}</b><br>Sesudah <b>${fmt(after)}</b><br>Selisih <b>${fmt(diff)} token</b>`);
+    S.chat.push({role:'info', html:`Token: ${fmt(before)} → ${fmt(after)} = <b>${fmt(diff)}</b> terpakai${mult>1?` (${fmt(raw)} × ${mult})`:''}${isAdmin()?'':` · sisa <b>${fmt(left)}</b>`}`});
+    toast('Pemakaian token', `Sebelum <b>${fmt(before)}</b><br>Sesudah <b>${fmt(after)}</b><br>Selisih <b>${fmt(diff)} token</b>${isAdmin()?'':`<br>Sisa <b>${fmt(left)}</b> token`}`);
     refreshUser();
   }catch(e){
     console.error(e);
     S.chat.push({role:'ai', text:'Permintaan gagal: '+(e.message||e)});
     toast('Gagal memanggil AI', esc(e.message||String(e)), 'err');
   }finally{
-    S.busy=false; saveChat(); renderMsgs();
+    S.busy=false; saveChat(); renderMsgs(); saveServerLog();
   }
 }
 
@@ -720,11 +835,13 @@ async function renderMembers(){
           <span class="tag ${m.face_descriptor?'ok':''}">${m.face_descriptor?'Face ID ada':'Belum Face ID'}</span>
           ${!m.active?'<span class="tag bad">Nonaktif</span>':exp?'<span class="tag bad">Kedaluwarsa</span>':''}
         </div></div>
-      <div>${meter('Auto',m.used_auto,m.limit_auto)}${meter('AI lain',m.used_other,m.limit_other)}${daysMeter(m)}
-      <small style="color:var(--ink-3)">${fmt(m.tokens_used)} token terpakai</small></div>
+      <div>${tokMeter(m,'Token')}${meter('Auto',m.used_auto,m.limit_auto)}${meter('AI lain',m.used_other,m.limit_other)}${daysMeter(m)}
+      <small style="color:var(--ink-3)">${fmt(m.tokens_used)} token terpakai total</small></div>
       <div class="acts">
         <button class="btn btn-soft btn-sm" data-a="edit" data-id="${m.id}">Ubah</button>
+        <button class="btn btn-soft btn-sm" data-a="limit" data-id="${m.id}">Tambah limit</button>
         <button class="btn btn-soft btn-sm" data-a="reset" data-id="${m.id}">Reset pemakaian</button>
+        <button class="btn btn-soft btn-sm" data-a="logs" data-id="${m.id}">Log chat</button>
         <button class="btn btn-soft btn-sm" data-a="face" data-id="${m.id}">Reset wajah</button>
         <button class="btn btn-danger btn-sm" data-a="del" data-id="${m.id}">Hapus</button>
       </div></div>`;
@@ -733,31 +850,74 @@ async function renderMembers(){
 }
 async function memberAct(a, m){
   if(a==='edit') return memberForm(m);
-  if(a==='reset'){ await sb.from('members').update({used_auto:0,used_other:0}).eq('id',m.id); toast('Pemakaian direset', esc(m.username)); }
+  if(a==='limit') return limitForm(m);
+  if(a==='logs') return logsModal(m);
+  if(a==='reset'){ await sb.from('members').update({used_auto:0,used_other:0,used_tokens:0}).eq('id',m.id); toast('Pemakaian direset', esc(m.username)); }
   if(a==='face'){ if(!confirm('Reset Face ID '+m.username+'? Member harus daftar wajah lagi saat login.')) return; await sb.from('members').update({face_descriptor:null}).eq('id',m.id); toast('Face ID direset', esc(m.username)); }
   if(a==='del'){ if(!confirm('Hapus akun '+m.username+' beserta riwayatnya?')) return; await sb.from('members').delete().eq('id',m.id); toast('Akun dihapus', esc(m.username)); }
   renderMembers();
 }
 $('newMember').onclick = () => memberForm(null);
-function modal(html){
+function modal(html, wide){
   const bg = document.createElement('div'); bg.className='modal-bg';
-  bg.innerHTML = `<div class="modal glass">${html}</div>`;
+  bg.innerHTML = `<div class="modal glass${wide?' wide':''}">${html}</div>`;
   bg.addEventListener('mousedown', e=>{ if(e.target===bg) bg.remove(); });
   document.body.appendChild(bg); return bg;
 }
+
+/* ---- tambah limit cepat ---- */
+function limitForm(m){
+  const bg = modal(`
+    <h3>Tambah limit · @${esc(m.username)}</h3>
+    <div class="row">
+      <div class="field"><label>Tambah Auto</label><input class="input" id="la" type="number" value="0"><small>Sekarang ${m.limit_auto}</small></div>
+      <div class="field"><label>Tambah AI lain</label><input class="input" id="lo" type="number" value="0"><small>Sekarang ${m.limit_other}</small></div>
+    </div>
+    <div class="field"><label>Tambah token</label><input class="input" id="lt" type="number" value="0"><small>Sekarang ${fmt(m.limit_tokens)}. Angka negatif mengurangi.</small></div>
+    <div class="err" id="lerr2"></div>
+    <div class="row" style="margin-top:12px"><button class="btn btn-soft" id="lc">Batal</button><button class="btn btn-primary" id="ls">Tambah</button></div>`);
+  bg.querySelector('#lc').onclick = () => bg.remove();
+  bg.querySelector('#ls').onclick = async () => {
+    const g = id => bg.querySelector('#'+id);
+    const a = +g('la').value||0, o = +g('lo').value||0, t = +g('lt').value||0;
+    const patch = {
+      limit_auto: Math.max((m.limit_auto||0)+a,0),
+      limit_other: Math.max((m.limit_other||0)+o,0),
+      limit_tokens: Math.max(Number(m.limit_tokens||0)+t,0)
+    };
+    const {error} = await sb.from('members').update(patch).eq('id',m.id);
+    if(error) return g('lerr2').textContent = error.message;
+    bg.remove(); toast('Limit ditambah', esc(m.username)); renderMembers();
+  };
+}
+
+/* ---- log chat member (admin) ---- */
+async function logsModal(m){
+  const {data} = await sb.from('chat_logs').select('*').eq('member_id',m.id).order('updated_at',{ascending:false});
+  const body = (!data||!data.length)
+    ? '<p style="color:var(--ink-3);font-size:14px">Belum ada log chat tersimpan.</p>'
+    : data.map(c=>`<details class="ldet"><summary><span>${esc(c.title||'Chat')}</span><small>${dt(c.updated_at)}</small></summary>
+        ${(c.messages||[]).filter(x=>x.role!=='info').map(x=>`<div class="lmsg"><b>${x.role==='user'?'Member':'AI'}</b>${esc(x.text||'')}${(x.atts&&x.atts.length)?`\n[${esc(x.atts.join(', '))}]`:''}</div>`).join('')}
+        <div style="margin-top:8px"><button class="btn btn-danger btn-sm" data-dl="${c.id}">Hapus log ini</button></div></details>`).join('');
+  const bg = modal(`<h3>Log chat · @${esc(m.username)}</h3>${body}<div class="row" style="margin-top:16px"><button class="btn btn-soft" id="lcx">Tutup</button></div>`, true);
+  bg.querySelector('#lcx').onclick = () => bg.remove();
+  bg.querySelectorAll('[data-dl]').forEach(b=>b.onclick=async()=>{ await sb.from('chat_logs').delete().eq('id',b.dataset.dl); bg.remove(); logsModal(m); });
+}
+
 function memberForm(m){
   const edit = !!m;
   const bg = modal(`
     <h3>${edit?'Ubah akun':'Buat akun member'}</h3>
     <div class="row">
       <div class="field"><label>Username</label><input class="input" id="mu" ${edit?'disabled':''} value="${edit?esc(m.username):''}" autocapitalize="none" spellcheck="false"></div>
-      <div class="field"><label>Nama tampilan</label><input class="input" id="mn" value="${edit?esc(m.display_name||''):''}"></div>
+      <div class="field"><label>Nama tampilan</label><input class="input" id="mn" value="${edit?esc(m.display_name||''):''}" placeholder="Kosong = sama dengan username"></div>
     </div>
     <div class="field"><label>${edit?'Password baru':'Password'}</label><input class="input" id="mp" type="text" placeholder="${edit?'Kosongkan jika tidak diganti':''}" autocomplete="off"></div>
     <div class="row">
       <div class="field"><label>Limit Auto</label><input class="input" id="ma" type="number" min="0" value="${edit?m.limit_auto:10}"></div>
       <div class="field"><label>Limit AI lain</label><input class="input" id="mo" type="number" min="0" value="${edit?m.limit_other:5}"></div>
     </div>
+    <div class="field"><label>Limit token</label><input class="input" id="mt" type="number" min="0" value="${edit?Number(m.limit_tokens||0):DEFAULT_TOKEN_LIMIT}"></div>
     <div class="field"><label>${edit?'Tambah hari masa berlaku':'Masa berlaku (hari)'}</label><input class="input" id="md" type="number" value="${edit?0:30}"><small>${edit?`Sisa saat ini ${Math.max(daysLeft(m)||0,0)} hari. Angka negatif mengurangi.`:'Akun nonaktif otomatis setelah lewat hari ini.'}</small></div>
     <label style="display:flex;gap:10px;align-items:center;font-size:14px;margin-bottom:6px"><input type="checkbox" id="mpr" ${edit&&m.premium?'checked':''}> Akses AI premium ${DIAMOND}</label>
     ${edit?`<label style="display:flex;gap:10px;align-items:center;font-size:14px;margin-bottom:6px"><input type="checkbox" id="mac" ${m.active?'checked':''}> Akun aktif</label>`:''}
@@ -767,25 +927,25 @@ function memberForm(m){
   bg.querySelector('#ms').onclick = async () => {
     const g = id => bg.querySelector('#'+id), err = g('merr'); err.textContent='';
     const username = g('mu').value.trim().toLowerCase(), pass = g('mp').value;
-    const la = +g('ma').value, lo = +g('mo').value, days = +g('md').value;
+    const la = +g('ma').value, lo = +g('mo').value, lt = +g('mt').value, days = +g('md').value;
     if(!edit){
-      if(!/^[a-z0-9_.-]{3,24}$/.test(username)) return err.textContent='Username 3–24 karakter: huruf kecil, angka, titik, strip, underscore.';
-      if(pass.length<4) return err.textContent='Password minimal 4 karakter.';
+      if(!username) return err.textContent='Username wajib diisi.';
+      if(!pass) return err.textContent='Password wajib diisi.';
       if(!(days>0)) return err.textContent='Isi masa berlaku lebih dari 0 hari.';
     }
-    if(la<0||lo<0||isNaN(la)||isNaN(lo)) return err.textContent='Limit tidak valid.';
+    if(la<0||lo<0||lt<0||isNaN(la)||isNaN(lo)||isNaN(lt)) return err.textContent='Limit tidak valid.';
     g('ms').disabled = true;
     try{
       if(!edit){
         const {error} = await sb.from('members').insert({
           username, display_name: g('mn').value.trim()||username, password_hash: await pwHash(username,pass),
-          role:'member', limit_auto:la, limit_other:lo, premium:g('mpr').checked,
+          role:'member', limit_auto:la, limit_other:lo, limit_tokens:lt, premium:g('mpr').checked,
           valid_days:days, expires_at:new Date(Date.now()+days*86400000).toISOString()
         });
         if(error) throw error;
         toast('Akun dibuat', `Username <b>${esc(username)}</b>. Face ID didaftarkan saat login pertama.`);
       } else {
-        const patch = {display_name:g('mn').value.trim()||m.username, limit_auto:la, limit_other:lo, premium:g('mpr').checked, active:g('mac').checked};
+        const patch = {display_name:g('mn').value.trim()||m.username, limit_auto:la, limit_other:lo, limit_tokens:lt, premium:g('mpr').checked, active:g('mac').checked};
         if(pass) patch.password_hash = await pwHash(m.username,pass);
         if(days){
           const base = Math.max(new Date(m.expires_at).getTime(), Date.now());
@@ -809,14 +969,18 @@ function renderSettings(){
   $('settingsBody').innerHTML = `
   <div class="card" style="max-width:720px;margin-bottom:16px">
     <h3>Koneksi API</h3>
-    <div class="field"><label for="sbase">Base URL</label><input class="input" id="sbase" value="${esc(S.api.base)}" placeholder="https://api.example.com/v1" autocapitalize="none" spellcheck="false"><small>Endpoint yang dipanggil: Base URL + /chat/completions (format OpenAI).</small></div>
+    <div class="field"><label for="sbase">Base URL</label><input class="input" id="sbase" value="${esc(S.api.base)}" placeholder="https://api.example.com/v1" autocapitalize="none" spellcheck="false"><small>Endpoint: Base URL + /chat/completions dan /models (format OpenAI).</small></div>
     <div class="field"><label for="skey">API key</label><div style="display:flex;gap:8px"><input class="input" id="skey" type="password" value="${esc(S.api.key)}" autocomplete="off"><button class="btn btn-soft" id="skeyShow">Lihat</button></div></div>
   </div>
   <div class="card" style="max-width:720px;margin-bottom:16px">
     <h3>Daftar model</h3>
-    <p style="font-size:13.5px;color:var(--ink-2);line-height:1.55;margin-bottom:14px">Model dengan kelipatan token di atas 10x otomatis bertanda diamond dan hanya bisa dipakai member premium. Model yang dicentang Auto memakai kuota Auto; model lain memakai kuota AI lain.</p>
+    <p style="font-size:13.5px;color:var(--ink-2);line-height:1.55;margin-bottom:14px">Model dengan kelipatan token di atas 10x otomatis bertanda diamond dan hanya bisa dipakai member premium. Model yang dicentang Auto memakai kuota Auto; model lain memakai kuota AI lain. Pilihan "Auto" di chat memakai model pertama yang bertanda Auto.</p>
     <div id="mlist"></div>
-    <button class="btn btn-soft btn-sm" id="addModel">Tambah model</button>
+    <div class="acts"><button class="btn btn-soft btn-sm" id="fetchModels">Ambil model dari API</button><button class="btn btn-soft btn-sm" id="addModel">Tambah model</button></div>
+  </div>
+  <div class="card" style="max-width:720px;margin-bottom:16px">
+    <h3>Log chat</h3>
+    <label style="display:flex;gap:10px;align-items:center;font-size:14px"><input type="checkbox" id="optLogs" ${S.opts.saveLogs?'checked':''}> Simpan log chat ke server (maks ${MAX_CHAT_LOGS} percakapan per member)</label>
   </div>
   <button class="btn btn-primary" id="saveApi">Simpan pengaturan</button>`;
   const draw = () => {
@@ -838,6 +1002,33 @@ function renderSettings(){
     });
   };
   draw();
+
+  const fetchModels = async (silent) => {
+    const base = $('sbase').value.trim().replace(/\/+$/,''), key = $('skey').value.trim();
+    if(!base || !key){ if(!silent) toast('Isi dulu','Base URL dan API key wajib diisi.','err'); return; }
+    $('fetchModels').disabled = true;
+    try{
+      const res = await fetch(base+'/models', {headers:{'Authorization':'Bearer '+key}});
+      const j = await res.json().catch(()=>({}));
+      if(!res.ok) throw new Error((j.error&&(j.error.message||j.error)) || ('HTTP '+res.status));
+      const ids = (j.data||j.models||[]).map(x=>typeof x==='string'?x:(x.id||x.name)).filter(Boolean);
+      if(!ids.length) throw new Error('Daftar model dari API kosong.');
+      const have = new Map(S.models.map(x=>[x.id,x]));
+      const next = [have.get('auto')||DEFAULT_MODELS[0]];
+      ids.forEach(id=>{
+        if(id==='auto') return;
+        const prem = PREMIUM_RE.test(id);
+        next.push(have.get(id) || {id, label:id, mult:prem?15:1, auto:!prem});
+      });
+      S.models = next; draw();
+      toast('Model diambil', `${ids.length} model dimuat. Cek kelipatan lalu simpan.`);
+    }catch(e){
+      if(!silent) toast('Gagal ambil model', esc(e.message||String(e)), 'err');
+    }finally{ $('fetchModels').disabled = false; }
+  };
+  $('fetchModels').onclick = () => fetchModels(false);
+  if(S.api.key && S.api.base && S.models===DEFAULT_MODELS) fetchModels(true);   // belum pernah disimpan: ambil otomatis
+
   $('addModel').onclick = () => { S.models.push({id:'',label:'',mult:1,auto:false}); draw(); };
   $('skeyShow').onclick = () => { const k=$('skey'); k.type = k.type==='password'?'text':'password'; $('skeyShow').textContent = k.type==='password'?'Lihat':'Sembunyikan'; };
   $('saveApi').onclick = async () => {
@@ -845,7 +1036,8 @@ function renderSettings(){
     if(!models.length) return toast('Model kosong','Isi minimal satu model.','err');
     S.api = {key:$('skey').value.trim(), base:$('sbase').value.trim()};
     S.models = models;
-    const {error} = await sb.from('settings').upsert([{key:'api',value:S.api},{key:'models',value:models}]);
+    S.opts = {saveLogs: $('optLogs').checked};
+    const {error} = await sb.from('settings').upsert([{key:'api',value:S.api},{key:'models',value:models},{key:'options',value:S.opts}]);
     if(error) return toast('Gagal menyimpan', esc(error.message), 'err');
     renderModels(); toast('Pengaturan disimpan','');
   };
